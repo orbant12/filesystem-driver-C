@@ -1,0 +1,12 @@
+#!/bin/bash
+case $(arch) in
+    "x86_64")
+        ./fsck.sfs.amd64 "$@"
+    ;;
+    "aarch64")
+        ./fsck.sfs.arm64 "$@"
+    ;;
+    *)
+        echo "Unsupported architecture: $(arch)"
+        exit 1
+esac
