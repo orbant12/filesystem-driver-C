@@ -680,7 +680,6 @@ static const struct fuse_opt option_spec[] = {
     FUSE_OPT_END
 };
 
-
 static void show_help(const char *progname)
 {
     printf("usage: %s mountpoint [options]\n\n", progname);
@@ -697,7 +696,6 @@ static void show_help(const char *progname)
            "        --fuse-help     show full FUSE help\n"
            "\n", default_img);
 }
-
 
 int main(int argc, char **argv)
 {
