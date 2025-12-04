@@ -16,7 +16,7 @@
 
 static const char default_img[] = "test.img";
 
-/* Options passed from commandline arguments */
+/* Options passed from commandline argumentss */
 struct options {
     const char *img;
     int background;
@@ -37,7 +37,7 @@ struct options {
 const char* __asan_default_options() { return "detect_leaks=0"; }
 
 
-//done
+
 static blockidx_t get_next(blockidx_t current) {
     blockidx_t next;
 
@@ -46,13 +46,13 @@ static blockidx_t get_next(blockidx_t current) {
     return next;
 }
 
-//done
+
 static void set_next(blockidx_t current, blockidx_t nextVal) {
     off_t offset = SFS_BLOCKTBL_OFF + (current * sizeof(blockidx_t));
     disk_write(&nextVal, sizeof(blockidx_t), offset);
 }
 
-//done
+
 static blockidx_t free_blk() {
     blockidx_t entry;
 
@@ -100,23 +100,11 @@ static int get_entry(const char *path, struct sfs_entry *ret_entry,
                      unsigned *ret_entry_off)
 {
     char *copy = strdup(path);
-
-    if (!copy) {
-        return -ENOMEM;
-    }
-
+    char *token = strtok(copy, "/");
+    int found;
     unsigned int dirOff = SFS_ROOTDIR_OFF;
     int dirEntries = SFS_ROOTDIR_NENTRIES;
     struct sfs_entry entry;
-
-    int found = 0;
-
-    char *token = strtok(copy, "/");
-
-    if (token == NULL && strcmp(path, "/") == 0) {
-        free(copy);
-        return 0; 
-    }
 
     while (token != NULL) {
         found = 0;
@@ -155,10 +143,6 @@ static int get_entry(const char *path, struct sfs_entry *ret_entry,
                 token = strtok(NULL, "/");
                 
                 if (token != NULL) {
-                    if (!(entry.size & SFS_DIRECTORY)) {
-                        free(copy);
-                        return -ENOTDIR;
-                    }
                     dirOff = entry.first_block;
                     dirEntries = SFS_DIR_NENTRIES;
                 }
@@ -167,12 +151,10 @@ static int get_entry(const char *path, struct sfs_entry *ret_entry,
         }
 
         if (!found) {
-            free(copy);
             return -ENOENT;
         }
     }
 
-    free(copy);
     return 0;
 }
 
@@ -190,17 +172,10 @@ static int get_entry(const char *path, struct sfs_entry *ret_entry,
 static int sfs_getattr(const char *path,
                        struct stat *st)
 {
-    int res = 0;
-
     log("getattr %s\n", path);
 
     memset(st, 0, sizeof(struct stat));
-
-    st->st_uid = getuid();
-    st->st_gid = getgid();
-    st->st_atime = time(NULL);
-    st->st_mtime = time(NULL);
-
+   
     if (strcmp(path, "/") == 0) {
         st->st_mode = S_IFDIR | 0755;
         st->st_nlink = 2;
@@ -208,6 +183,8 @@ static int sfs_getattr(const char *path,
     }
 
     struct sfs_entry entry;
+
+    int res = 0;
     res = get_entry(path, &entry, NULL);
     
     if (res != 0){
@@ -241,10 +218,11 @@ static int sfs_readdir(const char *path,
                        off_t offset,
                        struct fuse_file_info *fi)
 {
-    (void)offset;
-    (void)fi;
-
+    (void)offset, (void)fi;
     log("readdir %s\n", path);
+
+    (void)filler;
+    (void)buf;
 
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
@@ -267,14 +245,11 @@ static int sfs_readdir(const char *path,
         }
 
     } else {
+
         int res = get_entry(path, &dirEntry, NULL);
 
-        if (res != 0){
+        if (res != 0) {
             return res;
-        }
-
-        if (!(dirEntry.size & SFS_DIRECTORY)){
-            return -ENOTDIR;
         }
 
         blockidx_t blk = dirEntry.first_block;
@@ -282,8 +257,11 @@ static int sfs_readdir(const char *path,
         while (blk != SFS_BLOCKIDX_END && blk != SFS_BLOCKIDX_EMPTY) {
             
             for (int i=0; i < 8; i++) {
+
                 struct sfs_entry entry;
+
                 off_t addr = SFS_DATA_OFF + (blk * SFS_BLOCK_SIZE) + (i * sizeof(struct sfs_entry));
+                
                 disk_read(&entry, sizeof(struct sfs_entry), addr);
 
                 if (strlen(entry.filename) != 0) {
@@ -316,36 +294,17 @@ static int sfs_read(const char *path, char *buf, size_t size, off_t offset,
         return -ENOENT;
     }
 
-    if (entry.size & SFS_DIRECTORY){
-        return -EISDIR;
-    }
-
-    size_t fileSize = entry.size & SFS_SIZEMASK;
-
-    if (offset >= fileSize){
-        return 0;
-    }
-
-    if (offset + size > fileSize){
-        size = fileSize - offset;
-    }
-
     blockidx_t blk = entry.first_block;
     size_t bytesRead = 0;
 
     while (offset >= SFS_BLOCK_SIZE) {
-        if (blk == SFS_BLOCKIDX_END){
-            break;
-        }
         blk = get_next(blk);
         offset -= SFS_BLOCK_SIZE;
     }
 
     while (bytesRead < size && blk != SFS_BLOCKIDX_END && blk != SFS_BLOCKIDX_EMPTY) {
+        
         size_t needRead = SFS_BLOCK_SIZE - offset;
-        if (needRead > size - bytesRead){
-            needRead = size - bytesRead;
-        }
 
         off_t addr = SFS_DATA_OFF + (blk * SFS_BLOCK_SIZE) + offset;
         disk_read(buf + bytesRead, needRead, addr);
@@ -370,55 +329,38 @@ static int sfs_mkdir(const char *path, mode_t mode)
     (void)mode;
     
     char *copy = strdup(path);
-    char *endSlh = strrchr(copy, '/');
-    if (!endSlh){ 
-        free(copy); 
-        return -EINVAL; 
-    }
     
+    char *endSlh = strrchr(copy, '/');    
     *endSlh = '\0';
-    char *newName = endSlh + 1;
+
     char *pPath = copy;
     
     if (strlen(pPath) == 0){
         pPath = "/";
     }
 
-    if (strlen(newName) > SFS_FILENAME_MAX - 1) {
-        free(copy);
-        return -ENAMETOOLONG;
-    }
-
     struct sfs_entry pEntry;
     unsigned int pDiskOff = 0;
+
     int isRoot = (strcmp(pPath, "/") == 0);
 
     if (!isRoot) {
         if (get_entry(pPath, &pEntry, &pDiskOff) != 0) {
-            free(copy);
             return -ENOENT;
-        }
-        if (!(pEntry.size & SFS_DIRECTORY)) {
-            free(copy);
-            return -ENOTDIR;
         }
     }
 
-    int maxEntry = isRoot ? SFS_ROOTDIR_NENTRIES : SFS_DIR_NENTRIES;
     blockidx_t pBlk = isRoot ? 0 : pEntry.first_block;
     
     unsigned int emptySlotAddr = 0;
     int foundSlot = 0;
-
     int entriesChecked = 0;
+
+    int maxEntry = isRoot ? SFS_ROOTDIR_NENTRIES : SFS_DIR_NENTRIES;
 
     while(entriesChecked < maxEntry) {
         
         for(int i=0; i<8; i++) {
-
-            if (isRoot && entriesChecked >= SFS_ROOTDIR_NENTRIES){
-                break;
-            }
             
             off_t addr;
 
@@ -431,21 +373,12 @@ static int sfs_mkdir(const char *path, mode_t mode)
             struct sfs_entry temp;
             disk_read(&temp, sizeof(struct sfs_entry), addr);
             
-            if (strlen(temp.filename) > 0 && strcmp(temp.filename, newName) == 0) {
-                free(copy);
-                return -EEXIST;
-            }
-
             if (strlen(temp.filename) == 0 && foundSlot == 0) {
                 emptySlotAddr = addr;
                 foundSlot = 1;
             }
 
             entriesChecked++;
-        }
-
-        if (isRoot){
-            break;
         }
 
         pBlk = get_next(pBlk);
@@ -455,46 +388,39 @@ static int sfs_mkdir(const char *path, mode_t mode)
         }
     }
 
-    if (!foundSlot) {
-        free(copy);
-        return -ENOSPC;
-    }
-
     blockidx_t b1 = free_blk();
-
-    if (b1 == SFS_BLOCKIDX_END){ 
-        free(copy); 
-        return -ENOSPC; 
-    }
     
     set_next(b1, SFS_BLOCKIDX_END); 
     
     blockidx_t b2 = free_blk();
-    if (b2 == SFS_BLOCKIDX_END) { 
-        set_next(b1, SFS_BLOCKIDX_EMPTY);
-        free(copy); 
-        return -ENOSPC; 
-    }
 
     set_next(b1, b2);
     set_next(b2, SFS_BLOCKIDX_END);
 
     struct sfs_entry newEntry;
+
     memset(&newEntry, 0, sizeof(struct sfs_entry));
+    
+    char *newName = endSlh + 1;
     strncpy(newEntry.filename, newName, SFS_FILENAME_MAX - 1);
+
     newEntry.first_block = b1;
+
     newEntry.size = SFS_DIRECTORY;
 
     disk_write(&newEntry, sizeof(struct sfs_entry), emptySlotAddr);
     
     struct sfs_entry emptyEntries[8];
+
     memset(emptyEntries, 0, sizeof(emptyEntries));
-    for(int k=0; k<8; k++) emptyEntries[k].first_block = SFS_BLOCKIDX_EMPTY;
+
+    for(int i=0; i<8; i++) {
+        emptyEntries[i].first_block = SFS_BLOCKIDX_EMPTY;
+    }
 
     disk_write(emptyEntries, SFS_BLOCK_SIZE, SFS_DATA_OFF + (b1 * SFS_BLOCK_SIZE));
     disk_write(emptyEntries, SFS_BLOCK_SIZE, SFS_DATA_OFF + (b2 * SFS_BLOCK_SIZE));
 
-    free(copy);
     return 0;
 }
 
@@ -515,16 +441,16 @@ static int sfs_rmdir(const char *path)
         return -ENOENT;
     }
 
-    if (!(entry.size & SFS_DIRECTORY)){
-        return -ENOTDIR;
-    }
-
     blockidx_t blk = entry.first_block;
 
     while(blk != SFS_BLOCKIDX_END && blk != SFS_BLOCKIDX_EMPTY) {
+        
         for(int i=0; i<8; i++) {
+
             struct sfs_entry temp;
+
             disk_read(&temp, sizeof(struct sfs_entry), SFS_DATA_OFF + (blk * SFS_BLOCK_SIZE) + (i*sizeof(struct sfs_entry)));
+            
             if (strlen(temp.filename) > 0){
                 return -ENOTEMPTY;
             }
@@ -535,14 +461,19 @@ static int sfs_rmdir(const char *path)
     blk = entry.first_block;
 
     while(blk != SFS_BLOCKIDX_END && blk != SFS_BLOCKIDX_EMPTY) {
+
         blockidx_t next = get_next(blk);
         set_next(blk, SFS_BLOCKIDX_EMPTY);
+
         blk = next;
     }
 
     struct sfs_entry emptyEntry;
+
     memset(&emptyEntry, 0, sizeof(struct sfs_entry));
+
     emptyEntry.first_block = SFS_BLOCKIDX_EMPTY;
+    
     disk_write(&emptyEntry, sizeof(struct sfs_entry), entryAddr);
 
     return 0;
@@ -564,15 +495,13 @@ static int sfs_unlink(const char *path)
         return -ENOENT;
     }
 
-    if (entry.size & SFS_DIRECTORY){
-        return -EISDIR;
-    }
-
     blockidx_t blk = entry.first_block;
 
     while(blk != SFS_BLOCKIDX_END && blk != SFS_BLOCKIDX_EMPTY) {
+
         blockidx_t next = get_next(blk);
         set_next(blk, SFS_BLOCKIDX_EMPTY);
+
         blk = next;
     }
 
@@ -596,25 +525,19 @@ static int sfs_unlink(const char *path)
 static int sfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     (void)fi; 
-    
     (void)mode;
     
     log("create %s\n", path);
 
     char *copy = strdup(path);
-    char *endSlh = strrchr(copy, '/');
 
+    char *endSlh = strrchr(copy, '/');
     *endSlh = '\0';
-    char *newName = endSlh + 1;
+    
     char *pPath = copy;
     
     if (strlen(pPath) == 0){
         pPath = "/";
-    }
-
-    if (strlen(newName) > SFS_FILENAME_MAX - 1) { 
-        free(copy); 
-        return -ENAMETOOLONG; 
     }
 
     struct sfs_entry pEntry;
@@ -623,43 +546,32 @@ static int sfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     if (!isRoot) {
         if (get_entry(pPath, &pEntry, NULL) != 0) { 
-            free(copy); 
             return -ENOENT; 
         }
     }
 
     blockidx_t pBlk = isRoot ? 0 : pEntry.first_block;
 
+    unsigned int emptySlot = 0;
+    int found = 0;
+    int checked = 0;
     int maxEntry = isRoot ? SFS_ROOTDIR_NENTRIES : SFS_DIR_NENTRIES;
 
-    unsigned int emptySlot = 0;
-
-    int found = 0;
-
-    int checked = 0;
-
     while(checked < maxEntry) {
-        for(int i=0; i<8; i++) {
-             if (isRoot && checked >= SFS_ROOTDIR_NENTRIES){
-                break;
-             }
-             off_t addr = isRoot ? (SFS_ROOTDIR_OFF + checked * sizeof(struct sfs_entry)) : (SFS_DATA_OFF + pBlk * SFS_BLOCK_SIZE + i * sizeof(struct sfs_entry));
-             struct sfs_entry t;
-             disk_read(&t, sizeof(t), addr);
 
-             if (strlen(t.filename) > 0 && strcmp(t.filename, newName) == 0) {
-                 free(copy); 
-                 return -EEXIST;
-             }
-             if (strlen(t.filename) == 0 && !found) {
+        for(int i=0; i<8; i++) {
+
+             off_t addr = isRoot ? (SFS_ROOTDIR_OFF + checked * sizeof(struct sfs_entry)) : (SFS_DATA_OFF + pBlk * SFS_BLOCK_SIZE + i * sizeof(struct sfs_entry));
+             struct sfs_entry temp;
+             
+             disk_read(&temp, sizeof(temp), addr);
+
+             if (strlen(temp.filename) == 0 && !found) {
                  emptySlot = addr;
                  found = 1;
              }
-             checked++;
-        }
 
-        if (isRoot){ 
-            break;
+             checked++;
         }
 
         pBlk = get_next(pBlk);
@@ -669,19 +581,22 @@ static int sfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
         }
     }
 
-    if (!found) { 
-        free(copy); 
-        return -ENOSPC; 
+    struct sfs_entry newFile;
+
+    memset(&newFile, 0, sizeof(newFile));
+
+    char *newName = endSlh + 1;
+
+    if (strlen(newName) > SFS_FILENAME_MAX - 1) { 
+        return -ENAMETOOLONG; 
     }
 
-    struct sfs_entry newFile;
-    memset(&newFile, 0, sizeof(newFile));
     strncpy(newFile.filename, newName, SFS_FILENAME_MAX - 1);
+
     newFile.first_block = SFS_BLOCKIDX_END;
     newFile.size = 0;
 
     disk_write(&newFile, sizeof(newFile), emptySlot);
-    free(copy);
     return 0;
 }
 
